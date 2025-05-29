@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
-import 'dart:io';
-import 'package:flutter/services.dart';
 import 'database_helper.dart';
 
 class AliasManagerPage extends StatefulWidget {
@@ -12,8 +9,14 @@ class AliasManagerPage extends StatefulWidget {
 
 class _AliasManagerPageState extends State<AliasManagerPage> {
   Database? database;
-  Map<String, List<String>> aliasGroups = {};
-  List<String> allItems = [];
+  List<Map<String, dynamic>> categories = [];
+  List<Map<String, dynamic>> items = [];
+  List<Map<String, dynamic>> aliases = [];
+
+  int? selectedCategoryId;
+  int? selectedItemId;
+  String? selectedAlias;
+  TextEditingController aliasController = TextEditingController();
 
   @override
   void initState() {
@@ -23,166 +26,150 @@ class _AliasManagerPageState extends State<AliasManagerPage> {
 
   Future<void> initDatabase() async {
     database = await DatabaseHelper.getDatabase();
-    await fetchAliases();
+    await loadCategories();
   }
 
-  Future<void> fetchAliases() async {
-    final aliasResults = await database!.rawQuery('''
-      SELECT i.item AS actual_name, a.alias
-      FROM item_aliases a
-      JOIN inventory i ON LOWER(a.actual_name) = LOWER(i.item)
-    ''');
-
-    final grouped = <String, List<String>>{};
-    for (var row in aliasResults) {
-      final actual = row['actual_name'] as String;
-      final alias = row['alias'] as String;
-      grouped.putIfAbsent(actual, () => []).add(alias);
-    }
-
-    final itemsResult = await database!.query('inventory');
-    allItems = itemsResult.map((e) => e['item'].toString()).toList();
-
+  Future<void> loadCategories() async {
+    final result = await database!.query(
+      'categories',
+      where: 'parent_id IS NOT NULL',
+      orderBy: 'name',
+    );
     setState(() {
-      aliasGroups = grouped;
+      categories = result;
     });
   }
 
-  Future<void> showAddAliasDialog({String? existingAlias}) async {
-  String? selectedItem;
-  TextEditingController aliasController = TextEditingController(text: existingAlias ?? '');
+  Future<void> loadItems(int categoryId) async {
+    final result = await database!.rawQuery('''
+      SELECT i.id, i.name, COUNT(a.id) AS alias_count
+      FROM inventory i
+      LEFT JOIN item_aliases a ON a.inventory_id = i.id
+      WHERE i.category_id = ?
+      GROUP BY i.id
+      ORDER BY i.name
+    ''', [categoryId]);
 
-  if (existingAlias != null) {
-    // Lookup current actual_name for this alias
+    setState(() {
+      items = result;
+      selectedItemId = null;
+      aliases = [];
+      selectedAlias = null;
+      aliasController.clear();
+    });
+  }
+
+  Future<void> loadAliases(int inventoryId) async {
     final result = await database!.query(
       'item_aliases',
-      where: 'alias = ?',
-      whereArgs: [existingAlias],
-      limit: 1,
+      where: 'inventory_id = ?',
+      whereArgs: [inventoryId],
     );
-    if (result.isNotEmpty) {
-  selectedItem = result.first['actual_name'] as String?;
-  if (selectedItem != null && !allItems.contains(selectedItem)) {
-    allItems.add(selectedItem);
+
+    setState(() {
+      aliases = result;
+      selectedAlias = null;
+      aliasController.clear();
+    });
   }
-}
 
-  }
+  Future<void> saveAlias() async {
+    final text = aliasController.text.trim().toLowerCase();
+    if (text.isEmpty || selectedItemId == null) return;
 
-  await showDialog(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: Text(existingAlias == null ? "Add New Alias" : "Edit Alias"),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButtonFormField<String>(
-            hint: Text("Select inventory item"),
-            value: selectedItem,
-            onChanged: existingAlias == null
-                ? (value) => selectedItem = value
-                : null, // disable dropdown for editing
-            items: allItems.map((item) {
-              return DropdownMenuItem<String>(
-                value: item,
-                child: Text(item),
-              );
-            }).toList(),
-            disabledHint: selectedItem != null ? Text(selectedItem!) : Text("No item"),
-          ),
-          TextField(
-            controller: aliasController,
-            decoration: InputDecoration(labelText: "Alias name"),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(), child: Text("Cancel")),
-        ElevatedButton(
-          onPressed: () async {
-            final alias = aliasController.text.trim().toLowerCase();
-            final actual = selectedItem?.toLowerCase();
+    if (selectedAlias != null) {
+      await database!.update(
+        'item_aliases',
+        {'alias': text},
+        where: 'alias = ? AND inventory_id = ?',
+        whereArgs: [selectedAlias, selectedItemId],
+      );
+    } else {
+      await database!.insert(
+        'item_aliases',
+        {'alias': text, 'inventory_id': selectedItemId},
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
 
-            if (alias.isNotEmpty && actual != null) {
-              if (existingAlias != null) {
-                await database!.update(
-                  'item_aliases',
-                  {'alias': alias, 'actual_name': actual},
-                  where: 'alias = ?',
-                  whereArgs: [existingAlias],
-                );
-              } else {
-                await database!.insert(
-                  'item_aliases',
-                  {'alias': alias, 'actual_name': actual},
-                  conflictAlgorithm: ConflictAlgorithm.ignore,
-                );
-              }
-
-              await fetchAliases();
-              Navigator.of(context).pop();
-            }
-          },
-          child: Text("Save"),
-        ),
-      ],
-    ),
-  );
-}
-
-
-  Future<void> deleteAlias(String alias) async {
-    await database!.delete('item_aliases', where: 'alias = ?', whereArgs: [alias]);
-    await fetchAliases();
+    await loadAliases(selectedItemId!);
+    aliasController.clear();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Alias Manager')),
-      body: Column(
-        children: [
-          Expanded(
-            child: aliasGroups.isEmpty
-                ? Center(child: Text("No aliases available"))
-                : ListView(
-                    children: aliasGroups.entries.map((entry) {
-                      final item = entry.key;
-                      final aliases = entry.value;
-                      return ExpansionTile(
-                        title: Text("$item (${aliases.length})"),
-                        children: aliases.map((alias) {
-                          return ListTile(
-                            title: Text(alias),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: Icon(Icons.edit),
-                                  onPressed: () => showAddAliasDialog(existingAlias: alias),
-                                ),
-                                IconButton(
-                                  icon: Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () => deleteAlias(alias),
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    }).toList(),
-                  ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: ElevatedButton.icon(
-              onPressed: () => showAddAliasDialog(),
-              icon: Icon(Icons.add),
-              label: Text("Add New Alias"),
+      appBar: AppBar(title: Text("Alias Manager")),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            DropdownButton<int>(
+              hint: Text("Select Category"),
+              value: selectedCategoryId,
+              isExpanded: true,
+              items: categories.map((cat) {
+                return DropdownMenuItem<int>(
+                  value: cat['id'] as int,
+                  child: Text(cat['name'] ?? ''),
+                );
+              }).toList(),
+              onChanged: (value) async {
+                selectedCategoryId = value;
+                await loadItems(value!);
+              },
             ),
-          )
-        ],
+            SizedBox(height: 10),
+            DropdownButton<int>(
+              hint: Text("Select Item"),
+              value: selectedItemId,
+              isExpanded: true,
+              items: items.map((item) {
+                final aliasCount = item['alias_count'];
+                return DropdownMenuItem<int>(
+                  value: item['id'] as int,
+                  child: Text("${item['name']} (${aliasCount})"),
+                );
+              }).toList(),
+              onChanged: (value) async {
+                selectedItemId = value;
+                await loadAliases(value!);
+              },
+            ),
+            if (aliases.isNotEmpty) ...[
+              SizedBox(height: 10),
+              DropdownButton<String>(
+                hint: Text("Select Alias to Edit"),
+                value: selectedAlias,
+                isExpanded: true,
+                items: aliases.map((a) {
+                  return DropdownMenuItem<String>(
+                    value: a['alias'] as String,
+                    child: Text(a['alias']),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    selectedAlias = value;
+                    aliasController.text = value ?? '';
+                  });
+                },
+              )
+            ],
+            SizedBox(height: 10),
+            TextField(
+              controller: aliasController,
+              decoration: InputDecoration(labelText: "Alias name"),
+            ),
+            SizedBox(height: 10),
+            ElevatedButton.icon(
+              icon: Icon(Icons.save),
+              label: Text("Save Alias"),
+              onPressed: saveAlias,
+            )
+          ],
+        ),
       ),
     );
   }
-}
+} 

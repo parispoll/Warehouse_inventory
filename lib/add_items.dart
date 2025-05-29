@@ -27,6 +27,12 @@ class _AddItemsPageState extends State<AddItemsPage> {
     final addedItems = <String>[];
     final skippedItems = <String>[];
 
+    final int? mainWarehouseId = Sqflite.firstIntValue(await database!.rawQuery("SELECT id FROM locations WHERE name = 'Main Warehouse'"));
+    if (mainWarehouseId == null) {
+      _showError("Main Warehouse location not found in database.");
+      return;
+    }
+
     for (String line in lines) {
       final parts = line.trim().split(' ');
       if (parts.length < 3) {
@@ -40,13 +46,22 @@ class _AddItemsPageState extends State<AddItemsPage> {
         continue;
       }
 
-      final category = parts.first.toLowerCase();
+      final categoryName = parts.first.toLowerCase();
       final itemName = parts.sublist(1, parts.length - 1).join(' ').toLowerCase();
+
+      // Get or insert category
+      int? categoryId = Sqflite.firstIntValue(await database!.rawQuery(
+        "SELECT id FROM categories WHERE LOWER(name) = ?",
+        [categoryName],
+      ));
+      if (categoryId == null) {
+        categoryId = await database!.insert('categories', {'name': categoryName});
+      }
 
       // Check if item exists
       final existing = await database!.query(
         'inventory',
-        where: 'LOWER(item) = ?',
+        where: 'LOWER(name) = ?',
         whereArgs: [itemName],
       );
 
@@ -54,19 +69,41 @@ class _AddItemsPageState extends State<AddItemsPage> {
         alreadyExists.add(itemName);
         bool? replace = await askToReplace(itemName, quantity);
         if (replace == true) {
+          final itemId = existing.first['id'] as int;
           await database!.update(
             'inventory',
-            {'quantity': quantity, 'category': category},
-            where: 'LOWER(item) = ?',
-            whereArgs: [itemName],
+            {
+              'category_id': categoryId,
+              'name': itemName,
+            },
+            where: 'id = ?',
+            whereArgs: [itemId],
+          );
+
+          await database!.update(
+            'inventory_stock',
+            {
+              'quantity': quantity,
+              'last_updated': DateTime.now().toIso8601String(),
+            },
+            where: 'inventory_id = ? AND location_id = ?',
+            whereArgs: [itemId, mainWarehouseId],
           );
         }
       } else {
-        await database!.insert('inventory', {
-          'item': itemName,
-          'category': category,
-          'quantity': quantity,
+        final itemId = await database!.insert('inventory', {
+          'name': itemName,
+          'category_id': categoryId,
+          'low_stock_threshold': 5,
         });
+
+        await database!.insert('inventory_stock', {
+          'inventory_id': itemId,
+          'location_id': mainWarehouseId,
+          'quantity': quantity,
+          'last_updated': DateTime.now().toIso8601String(),
+        });
+
         addedItems.add(itemName);
       }
     }
@@ -120,6 +157,22 @@ class _AddItemsPageState extends State<AddItemsPage> {
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text("Yes, replace"),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showError(String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text("Error"),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text("OK"),
           )
         ],
       ),

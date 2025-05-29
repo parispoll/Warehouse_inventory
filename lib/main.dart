@@ -5,6 +5,7 @@ import 'logs_view.dart';
 import 'alias_manager.dart';
 import 'add_items.dart';
 import 'low_stock_page.dart';
+import 'database_helper.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
@@ -25,7 +26,7 @@ Future<void> copyDatabaseToDownloads(BuildContext context) async {
   }
 
   try {
-    final dbPath = '/data/data/com.example.inventory_app/databases/hotel_warehouse_inventory.db';
+    final dbPath = await DatabaseHelper.getDatabasePath();
     final sourceFile = File(dbPath);
     final downloadsDir = Directory('/storage/emulated/0/Download');
 
@@ -46,19 +47,30 @@ Future<void> copyDatabaseToDownloads(BuildContext context) async {
   }
 }
 
+
+
 Future<List<String>> getLowStockItems() async {
-  final dbPath = await getDatabasesPath();
-  final path = p.join(dbPath, 'hotel_warehouse_inventory.db');
-  final db = await openDatabase(path);
+  final db = await DatabaseHelper.getDatabase();
 
   final result = await db.rawQuery('''
-    SELECT item, quantity, COALESCE(low_stock_threshold, 5) AS threshold
-    FROM inventory
-    WHERE quantity < COALESCE(low_stock_threshold, 5)
+    SELECT 
+      i.name AS item_name,
+      s.quantity,
+      l.name AS location,
+      COALESCE(i.low_stock_threshold, 5) AS threshold
+    FROM inventory_stock s
+    JOIN inventory i ON s.inventory_id = i.id
+    JOIN locations l ON s.location_id = l.id
+    WHERE s.quantity < COALESCE(i.low_stock_threshold, 5)
+    ORDER BY l.name, i.name
   ''');
 
-  return result.map((row) => "${row['item']} (qty: ${row['quantity']})").toList();
+  return result.map((row) =>
+    "${row['item_name']} (${row['location']}) - qty: ${row['quantity']}/${row['threshold']}"
+  ).toList();
 }
+
+
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
