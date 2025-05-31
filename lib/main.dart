@@ -13,7 +13,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 
-// ✅ Declare globally so it's accessible everywhere
 final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
 
 Future<void> copyDatabaseToDownloads(BuildContext context) async {
@@ -47,8 +46,6 @@ Future<void> copyDatabaseToDownloads(BuildContext context) async {
   }
 }
 
-
-
 Future<List<String>> getLowStockItems() async {
   final db = await DatabaseHelper.getDatabase();
 
@@ -70,8 +67,6 @@ Future<List<String>> getLowStockItems() async {
   ).toList();
 }
 
-
-
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
@@ -90,101 +85,105 @@ class InventoryApp extends StatelessWidget {
   }
 }
 
-// ✅ Stateful HomePage so we can check low stock automatically
 class HomePage extends StatefulWidget {
   @override
   _HomePageState createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
+  int lowStockCount = 0;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkLowStock(context);
+      _loadLowStock();
     });
   }
 
-  void _checkLowStock(BuildContext context) async {
+  void _loadLowStock() async {
     final lowStockItems = await getLowStockItems();
-    if (lowStockItems.isNotEmpty) {
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: Text("⚠ Low Stock Alert"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: lowStockItems.map((item) => Text(item)).toList(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.push(context, MaterialPageRoute(builder: (_) => LowStockPage()));
-              },
-              child: Text('View'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Dismiss'),
-            ),
-          ],
-        ),
-      );
-    }
+    setState(() {
+      lowStockCount = lowStockItems.length;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text('Warehouse Inventory')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton(
-              child: Text("Inventory List"),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => InventoryHomePage()),
-              ),
-            ),
-            ElevatedButton(
-              child: Text("InOrders"),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => InOrdersPage()),
-              ),
-            ),
-            ElevatedButton(
-              child: Text("View Logs"),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => LogsViewPage()),
-              ),
-            ),
-            ElevatedButton(
-              child: Text("Alias Manager"),
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => AliasManagerPage()),
-              ),
-            ),
-            ElevatedButton(
-              child: Text("Add New Items"),
-              onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => AddItemsPage()));
+      body: Column(
+        children: [
+          if (lowStockCount > 0)
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => LowStockPage()),
+                );
               },
+              child: Container(
+                color: Colors.red,
+                width: double.infinity,
+                padding: EdgeInsets.all(12),
+                child: Text(
+                  '⚠ $lowStockCount items in low stock - Tap to view',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
             ),
-            ElevatedButton(
-              child: Text("Backup Database"),
-              onPressed: () async {
-                await Permission.storage.request();
-                copyDatabaseToDownloads(context);
-              },
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton(
+                    child: Text("Inventory List"),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => InventoryHomePage()),
+                    ),
+                  ),
+                  ElevatedButton(
+                    child: Text("InOrders"),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => InOrdersPage()),
+                    ),
+                  ),
+                  ElevatedButton(
+                    child: Text("View Logs"),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => LogsViewPage()),
+                    ),
+                  ),
+                  ElevatedButton(
+                    child: Text("Alias Manager"),
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => AliasManagerPage()),
+                    ),
+                  ),
+                  ElevatedButton(
+                    child: Text("Add New Items"),
+                    onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => AddItemsPage()));
+                    },
+                  ),
+                  ElevatedButton(
+                    child: Text("Backup Database"),
+                    onPressed: () async {
+                      await Permission.storage.request();
+                      copyDatabaseToDownloads(context);
+                    },
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          )
+        ],
       ),
     );
   }

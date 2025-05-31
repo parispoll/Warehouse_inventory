@@ -160,30 +160,72 @@ class _InOrdersPageState extends State<InOrdersPage> {
     _orderController.clear();
   }
 
-  Future<void> promptAddAlias(String unknownItem) async {
-    String? selectedName;
+   Future<void> promptAddAlias(String unknownItem) async {
+  String? selectedCategory;
+  String? selectedItemName;
+  List<Map<String, dynamic>> inventoryList = inventoryMap.values.toList();
+  List<String> categoryList = [];
 
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
+  // Fetch category names from the database
+  final categories = await database!.rawQuery('SELECT DISTINCT c.name FROM categories c JOIN inventory i ON i.category_id = c.id');
+  categoryList = categories.map((row) => row['name'].toString()).toList();
+
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
         title: Text("Item Not Found"),
-        content: DropdownButtonFormField<String>(
-          decoration: InputDecoration(labelText: "Link to existing item"),
-          items: inventoryMap.values.map<DropdownMenuItem<String>>((item) {
-  return DropdownMenuItem<String>(
-    value: item['name'],
-    child: Text(item['name']),
-  );
-}).toList(),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Unknown item: \"$unknownItem\"", style: TextStyle(fontWeight: FontWeight.bold)),
+            SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              decoration: InputDecoration(labelText: "Select Category"),
+              value: selectedCategory,
+              items: categoryList.map((cat) {
+                return DropdownMenuItem<String>(
+                  value: cat,
+                  child: Text(cat),
+                );
+              }).toList(),
+              onChanged: (value) async {
+                selectedCategory = value;
+                final result = await database!.rawQuery('''
+                  SELECT i.name FROM inventory i
+                  JOIN categories c ON i.category_id = c.id
+                  WHERE c.name = ?
+                ''', [selectedCategory]);
+                inventoryList = result.map((row) => {
+                  'name': row['name'],
+                  'id': inventoryMap[row['name']!.toString().toLowerCase()]?['id']
+                }).where((item) => item['id'] != null).toList();
 
-          onChanged: (value) => selectedName = value,
+                selectedItemName = null; // Reset selected item
+                setState(() {});
+              },
+            ),
+            SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              decoration: InputDecoration(labelText: "Link to existing item"),
+              value: selectedItemName,
+              items: inventoryList.map<DropdownMenuItem<String>>((item) {
+                return DropdownMenuItem<String>(
+                  value: item['name'],
+                  child: Text(item['name']),
+                );
+              }).toList(),
+              onChanged: (value) => setState(() => selectedItemName = value),
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: Text("Cancel")),
           ElevatedButton(
             onPressed: () async {
-              if (selectedName != null) {
-                final itemId = inventoryMap[selectedName!.toLowerCase()]!['id'];
+              if (selectedItemName != null) {
+                final itemId = inventoryMap[selectedItemName!.toLowerCase()]!['id'];
                 await database!.insert('item_aliases', {
                   'alias': unknownItem.toLowerCase(),
                   'inventory_id': itemId,
@@ -196,8 +238,11 @@ class _InOrdersPageState extends State<InOrdersPage> {
           )
         ],
       ),
-    );
-  }
+    ),
+  );
+}
+
+
 
   Future<void> undoLastOrder() async {
     final logName = _logNameController.text.trim();

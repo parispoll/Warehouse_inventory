@@ -2,14 +2,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
-
 import 'package:flutter/services.dart';
 import 'database_helper.dart';
 import 'main.dart'; // for routeObserver
 import 'package:flutter/widgets.dart';
 import 'models/inventory_item.dart';
-
-
 
 class InventoryHomePage extends StatefulWidget {
   @override
@@ -19,6 +16,8 @@ class InventoryHomePage extends StatefulWidget {
 class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
   Database? database;
   List<InventoryItem> items = [];
+  List<String> parentCategories = ['Kitchen Items', 'Bar Item', 'Other Items'];
+  String searchQuery = '';
 
   @override
   void initState() {
@@ -106,8 +105,134 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
     );
   }
 
+  void _showEditSubcategoryDialog(String subcategory) async {
+    String? selectedParent = parentCategories.first;
+    String? newParent = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Change Parent for "$subcategory"'),
+          content: DropdownButtonFormField<String>(
+            value: selectedParent,
+            items: parentCategories.map((p) => DropdownMenuItem(value: p, child: Text(p))).toList(),
+            onChanged: (val) => selectedParent = val,
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context, selectedParent), child: Text('Save')),
+          ],
+        );
+      }
+    );
+
+    if (newParent != null) {
+      await database!.rawUpdate('''
+        UPDATE categories SET parent_id = (
+          SELECT id FROM categories WHERE name = ?
+        ) WHERE name = ?
+      ''', [newParent, subcategory]);
+      fetchItems();
+    }
+  }
+
+ void _showEditItemDialog(InventoryItem item) async {
+  final nameController = TextEditingController(text: item.name);
+  final qtyController = TextEditingController(text: item.quantity.toString());
+  final newCategoryController = TextEditingController();
+  String? selectedCategory = item.categoryName;
+
+  // Fetch available categories
+  final categoriesResult = await database!.rawQuery('SELECT name FROM categories ORDER BY name');
+  final categoryList = categoriesResult.map((e) => e['name'] as String).toList();
+
+  await showDialog(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: Text('Edit "${item.name}"'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nameController, decoration: InputDecoration(labelText: 'Name')),
+              TextField(controller: qtyController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'Quantity')),
+              DropdownButtonFormField<String>(
+                value: selectedCategory,
+                decoration: InputDecoration(labelText: 'Select Existing Category'),
+                items: categoryList.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                onChanged: (val) => selectedCategory = val,
+              ),
+              SizedBox(height: 8),
+              TextField(
+                controller: newCategoryController,
+                decoration: InputDecoration(labelText: 'Or Create New Category'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              String? finalCategory = selectedCategory;
+
+              if (newCategoryController.text.trim().isNotEmpty) {
+                final newCatName = newCategoryController.text.trim();
+
+                // Get parent category ID
+                final parentIdResult = await database!.rawQuery(
+                  'SELECT id FROM categories WHERE name = ?',
+                  [item.parentCategory],
+                );
+
+                int? parentId = parentIdResult.isNotEmpty ? parentIdResult.first['id'] as int : null;
+
+                // Insert new category
+                final newCategoryId = await database!.insert('categories', {
+                  'name': newCatName,
+                  'parent_id': parentId,
+                });
+
+                finalCategory = newCatName;
+              }
+
+              if (finalCategory != null) {
+                await database!.rawUpdate(
+                  'UPDATE inventory SET name = ?, category_id = (SELECT id FROM categories WHERE name = ?) WHERE id = ?',
+                  [nameController.text, finalCategory, item.id],
+                );
+
+                await database!.rawUpdate(
+                  'UPDATE inventory_stock SET quantity = ? WHERE inventory_id = ?',
+                  [int.tryParse(qtyController.text) ?? item.quantity, item.id],
+                );
+              }
+
+              Navigator.pop(context);
+              fetchItems();
+            },
+            child: Text('Save'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+
+
   @override
   Widget build(BuildContext context) {
+    final filteredItems = items.where((item) =>
+      item.name.toLowerCase().contains(searchQuery.toLowerCase()) ||
+      (item.categoryName?.toLowerCase().contains(searchQuery.toLowerCase()) ?? false)
+    ).toList();
+
+    print("ITEMS DEBUG:");
+    for (var item in filteredItems) {
+      print("Item: ${item.name}, Parent: ${item.parentCategory}, Category: ${item.categoryName}");
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Inventory List'),
@@ -117,39 +242,79 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
             onPressed: fetchItems,
           )
         ],
-      ),
-      body: items.isEmpty
-          ? Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final isLowStock = item.quantity < item.lowStockThreshold;
-
-                return ListTile(
-                  title: Text('${item.name} (${item.location})'),
-                  subtitle: Text(
-                    'Qty: ${item.quantity} | Category: ${item.categoryName ?? "Uncategorized"}',
-                    style: isLowStock ? TextStyle(color: Colors.red) : null,
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.remove),
-                        onPressed: () => updateQuantity(item.id, item.location, item.quantity - 1),
-                      ),
-                      Text('${item.quantity}'),
-                      IconButton(
-                        icon: Icon(Icons.add),
-                        onPressed: () => updateQuantity(item.id, item.location, item.quantity + 1),
-                      ),
-                    ],
-                  ),
-                  onTap: () => showLogs(context, item.id, item.name),
-                );
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(48.0),
+          child: Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Search inventory...'
+              ),
+              onChanged: (value) {
+                setState(() {
+                  searchQuery = value;
+                });
               },
+            ),
+          ),
+        ),
+      ),
+      body: filteredItems.isEmpty
+          ? Center(child: CircularProgressIndicator())
+          : ListView(
+              children: parentCategories.map((parent) {
+                final parentItems = filteredItems.where((item) => item.parentCategory == parent).toList();
+                print("Parent: $parent has ${parentItems.length} items");
+
+                final subcategories = parentItems
+                    .map((e) => e.categoryName?.trim() ?? 'Uncategorized')
+                    .toSet();
+                print("Subcategories under $parent: $subcategories");
+
+                return ExpansionTile(
+                  title: Text(parent),
+                  children: subcategories.map((sub) {
+                    final subItems = parentItems
+                        .where((item) => (item.categoryName?.trim() ?? 'Uncategorized') == sub)
+                        .toList();
+
+                    return ExpansionTile(
+                      title: GestureDetector(
+                        onLongPress: () => _showEditSubcategoryDialog(sub),
+                        child: Text(sub),
+                      ),
+                      children: subItems.map((item) {
+                        final isLowStock = item.quantity < item.lowStockThreshold;
+
+                        return ListTile(
+                          onLongPress: () => _showEditItemDialog(item),
+                          title: Text('${item.name} (${item.location})'),
+                          subtitle: Text(
+                            'Qty: ${item.quantity} | Category: ${item.categoryName ?? "Uncategorized"}',
+                            style: isLowStock ? TextStyle(color: Colors.red) : null,
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: Icon(Icons.remove),
+                                onPressed: () => updateQuantity(item.id, item.location, item.quantity - 1),
+                              ),
+                              Text('${item.quantity}'),
+                              IconButton(
+                                icon: Icon(Icons.add),
+                                onPressed: () => updateQuantity(item.id, item.location, item.quantity + 1),
+                              ),
+                            ],
+                          ),
+                          onTap: () => showLogs(context, item.id, item.name),
+                        );
+                      }).toList(),
+                    );
+                  }).toList(),
+                );
+              }).toList(),
             ),
     );
   }
-} 
+}

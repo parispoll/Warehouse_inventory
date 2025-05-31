@@ -12,11 +12,11 @@ class DatabaseHelper {
     if (_database != null) return _database!;
 
     final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, 'hotel_warehouse_inventory5.db');
+    final path = p.join(dbPath, 'hotel_warehouse_inventory7.db');
     final file = File(path);
 
     if (!await file.exists()) {
-      ByteData data = await rootBundle.load('assets/database/hotel_warehouse_inventory5.db');
+      ByteData data = await rootBundle.load('assets/database/hotel_warehouse_inventory7.db');
       List<int> bytes = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
       await file.writeAsBytes(bytes, flush: true);
     }
@@ -38,7 +38,7 @@ class DatabaseHelper {
   // Inside database_helper.dart (optional utility)
 static Future<String> getDatabasePath() async {
   final dbPath = await getDatabasesPath();
-  return p.join(dbPath, 'hotel_warehouse_inventory5.db');
+  return p.join(dbPath, 'hotel_warehouse_inventory6.db');
 }
 
 

@@ -7,6 +7,7 @@ class InventoryItem {
   final String? barcode;
   final int lowStockThreshold;
   final String? categoryName;
+  final String? parentCategory;
   final int quantity;
   final String location;
 
@@ -19,6 +20,7 @@ class InventoryItem {
     this.barcode,
     required this.lowStockThreshold,
     this.categoryName,
+    this.parentCategory,
     required this.quantity,
     required this.location,
   });
@@ -33,12 +35,11 @@ class InventoryItem {
       barcode: map['barcode'],
       lowStockThreshold: map['low_stock_threshold'],
       categoryName: map['category_name'],
+      parentCategory: map['parent_category'],
       quantity: map['quantity'],
       location: map['location'],
     );
   }
-
-  
 }
 
 const String inventoryItemQuery = '''
@@ -51,12 +52,13 @@ SELECT
   i.barcode,
   i.low_stock_threshold,
   c.name AS category_name,
+  pc.name AS parent_category,
   s.quantity,
   l.name AS location
 FROM inventory i
 LEFT JOIN categories c ON i.category_id = c.id
+LEFT JOIN categories pc ON c.parent_id = pc.id
 LEFT JOIN inventory_stock s ON i.id = s.inventory_id
 LEFT JOIN locations l ON s.location_id = l.id
 ORDER BY i.name ASC;
 ''';
-

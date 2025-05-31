@@ -52,11 +52,10 @@ class _LogsViewPageState extends State<LogsViewPage> with RouteAware {
 
   Future<void> fetchLogs() async {
     final result = await database!.rawQuery('''
-      SELECT ol.*, inv.name AS item_name, inv.price
-FROM order_logs ol
-LEFT JOIN inventory inv ON ol.item_id = inv.id
-ORDER BY ol.timestamp DESC
-
+      SELECT ol.*, inv.name AS item_name, inv.price, inv.unit, inv.code
+      FROM order_logs ol
+      LEFT JOIN inventory inv ON ol.item_id = inv.id
+      ORDER BY ol.timestamp DESC
     ''');
 
     Map<String, List<Map<String, dynamic>>> grouped = {};
@@ -74,11 +73,12 @@ ORDER BY ol.timestamp DESC
     final safeLogName = logName.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
 
     final rows = [
-      ['Item', 'Price (€)', 'Quantity Subtracted'],
+      ['Code', 'Item', 'Quantity', 'Unit'],
       ...items.map((log) => [
-        log['item_name'],
-        log['price'] ?? '—',
-        log['quantity_subtracted']
+        log['code'] ?? '',
+        log['item_name'] ?? '',
+        log['quantity_subtracted'] ?? '',
+        log['unit'] ?? '',
       ]),
     ];
 
