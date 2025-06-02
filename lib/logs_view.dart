@@ -9,6 +9,8 @@ import 'package:flutter/widgets.dart';
 import 'package:csv/csv.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'dart:convert';
+
 
 class LogsViewPage extends StatefulWidget {
   @override
@@ -73,12 +75,13 @@ class _LogsViewPageState extends State<LogsViewPage> with RouteAware {
     final safeLogName = logName.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
 
     final rows = [
-      ['Code', 'Item', 'Quantity', 'Unit'],
+      ['Code', 'Item', 'Unit', 'Quantity'],
       ...items.map((log) => [
         log['code'] ?? '',
         log['item_name'] ?? '',
-        log['quantity_subtracted'] ?? '',
         log['unit'] ?? '',
+        log['quantity_subtracted'] ?? '',
+        
       ]),
     ];
 
@@ -90,7 +93,9 @@ class _LogsViewPageState extends State<LogsViewPage> with RouteAware {
     }
 
     final file = File('${warehouseDir.path}/order_$safeLogName.csv');
-    await file.writeAsString(csv);
+    await file.writeAsString(csv, encoding: utf8);
+
+
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('✅ Exported to Warehouse: order_$safeLogName.csv')),

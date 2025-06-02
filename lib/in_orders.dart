@@ -113,7 +113,8 @@ class _InOrdersPageState extends State<InOrdersPage> {
         continue;
       }
 
-      final newQty = (item['quantity'] as int) - quantity;
+      final newQty = (item['quantity'] as num).toInt() - quantity;
+
 
       await database!.update(
         'inventory_stock',

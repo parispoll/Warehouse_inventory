@@ -33,10 +33,10 @@ class InventoryItem {
       price: map['price']?.toDouble(),
       unit: map['unit'],
       barcode: map['barcode'],
-      lowStockThreshold: map['low_stock_threshold'],
+      lowStockThreshold: _toInt(map['low_stock_threshold']),
       categoryName: map['category_name'],
       parentCategory: map['parent_category'],
-      quantity: map['quantity'],
+      quantity: _toInt(map['quantity']),
       location: map['location'],
     );
   }
@@ -62,3 +62,11 @@ LEFT JOIN inventory_stock s ON i.id = s.inventory_id
 LEFT JOIN locations l ON s.location_id = l.id
 ORDER BY i.name ASC;
 ''';
+
+int _toInt(dynamic value) {
+  if (value == null) return 0;
+  if (value is int) return value;
+  if (value is double) return value.toInt();
+  if (value is String) return double.tryParse(value)?.toInt() ?? 0;
+  return 0;
+}
