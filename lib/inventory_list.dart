@@ -135,37 +135,45 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
     }
   }
 
- void _showEditItemDialog(InventoryItem item) async {
-  final nameController = TextEditingController(text: item.name);
-  final qtyController = TextEditingController(text: item.quantity.toString());
-  final newCategoryController = TextEditingController();
-  String? selectedCategory = item.categoryName;
+  void _showEditItemDialog(InventoryItem item) async {
+  final thresholdController = TextEditingController(text: item.lowStockThreshold.toString());
 
-  // Fetch available categories
-  final categoriesResult = await database!.rawQuery('SELECT name FROM categories ORDER BY name');
-  final categoryList = categoriesResult.map((e) => e['name'] as String).toList();
+  // Fetch all quantities for this item across all locations
+  final stockResult = await database!.rawQuery('''
+    SELECT l.name AS location, s.quantity
+    FROM inventory_stock s
+    JOIN locations l ON s.location_id = l.id
+    WHERE s.inventory_id = ?
+  ''', [item.id]);
+
+  final Map<String, TextEditingController> qtyControllers = {
+    for (var row in stockResult)
+      row['location'] as String: TextEditingController(text: row['quantity'].toString())
+  };
 
   await showDialog(
     context: context,
     builder: (context) {
       return AlertDialog(
-        title: Text('Edit "${item.name}"'),
+        title: Text('Item: ${item.name}'),
         content: SingleChildScrollView(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(controller: nameController, decoration: InputDecoration(labelText: 'Name')),
-              TextField(controller: qtyController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'Quantity')),
-              DropdownButtonFormField<String>(
-                value: selectedCategory,
-                decoration: InputDecoration(labelText: 'Select Existing Category'),
-                items: categoryList.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
-                onChanged: (val) => selectedCategory = val,
-              ),
-              SizedBox(height: 8),
+              Text("Code: ${item.id}"),
+              SizedBox(height: 4),
+              Text("Category: ${item.categoryName ?? 'Uncategorized'}"),
+              SizedBox(height: 16),
+              ...qtyControllers.entries.map((entry) => TextField(
+                controller: entry.value,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: 'Quantity (${entry.key})'),
+              )),
+              SizedBox(height: 16),
               TextField(
-                controller: newCategoryController,
-                decoration: InputDecoration(labelText: 'Or Create New Category'),
+                controller: thresholdController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: 'Low Stock Threshold'),
               ),
             ],
           ),
@@ -174,39 +182,33 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
           TextButton(onPressed: () => Navigator.pop(context), child: Text('Cancel')),
           ElevatedButton(
             onPressed: () async {
-              String? finalCategory = selectedCategory;
-
-              if (newCategoryController.text.trim().isNotEmpty) {
-                final newCatName = newCategoryController.text.trim();
-
-                // Get parent category ID
-                final parentIdResult = await database!.rawQuery(
-                  'SELECT id FROM categories WHERE name = ?',
-                  [item.parentCategory],
-                );
-
-                int? parentId = parentIdResult.isNotEmpty ? parentIdResult.first['id'] as int : null;
-
-                // Insert new category
-                final newCategoryId = await database!.insert('categories', {
-                  'name': newCatName,
-                  'parent_id': parentId,
-                });
-
-                finalCategory = newCatName;
+              // Update quantities per location
+              for (var entry in qtyControllers.entries) {
+                final locName = entry.key;
+                final qty = int.tryParse(entry.value.text) ?? 0;
+                final locIdResult = await database!.rawQuery(
+                  'SELECT id FROM locations WHERE name = ?', [locName]);
+                if (locIdResult.isNotEmpty) {
+                  final locId = locIdResult.first['id'];
+                  await database!.update(
+                    'inventory_stock',
+                    {
+                      'quantity': qty,
+                      'last_updated': DateTime.now().toIso8601String(),
+                    },
+                    where: 'inventory_id = ? AND location_id = ?',
+                    whereArgs: [item.id, locId],
+                  );
+                }
               }
 
-              if (finalCategory != null) {
-                await database!.rawUpdate(
-                  'UPDATE inventory SET name = ?, category_id = (SELECT id FROM categories WHERE name = ?) WHERE id = ?',
-                  [nameController.text, finalCategory, item.id],
-                );
-
-                await database!.rawUpdate(
-                  'UPDATE inventory_stock SET quantity = ? WHERE inventory_id = ?',
-                  [int.tryParse(qtyController.text) ?? item.quantity, item.id],
-                );
-              }
+              // Update low stock threshold
+              await database!.update(
+                'inventory',
+                {'low_stock_threshold': int.tryParse(thresholdController.text) ?? 0},
+                where: 'id = ?',
+                whereArgs: [item.id],
+              );
 
               Navigator.pop(context);
               fetchItems();
@@ -220,6 +222,26 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
 }
 
 
+  int _naturalCompare(String a, String b) {
+    final numberRegex = RegExp(r'(\d+)');
+
+    final aMatch = numberRegex.firstMatch(a);
+    final bMatch = numberRegex.firstMatch(b);
+
+    if (aMatch != null && bMatch != null) {
+      final prefixA = a.substring(0, aMatch.start);
+      final prefixB = b.substring(0, bMatch.start);
+      final numA = int.tryParse(aMatch.group(0)!) ?? 0;
+      final numB = int.tryParse(bMatch.group(0)!) ?? 0;
+
+      final prefixComparison = prefixA.compareTo(prefixB);
+      if (prefixComparison != 0) return prefixComparison;
+
+      return numA.compareTo(numB);
+    }
+
+    return a.compareTo(b);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -227,11 +249,6 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
       item.name.toLowerCase().contains(searchQuery.toLowerCase()) ||
       (item.categoryName?.toLowerCase().contains(searchQuery.toLowerCase()) ?? false)
     ).toList();
-
-    print("ITEMS DEBUG:");
-    for (var item in filteredItems) {
-      print("Item: ${item.name}, Parent: ${item.parentCategory}, Category: ${item.categoryName}");
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -247,9 +264,7 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
           child: Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
-              decoration: InputDecoration(
-                hintText: 'Search inventory...'
-              ),
+              decoration: InputDecoration(hintText: 'Search inventory...'),
               onChanged: (value) {
                 setState(() {
                   searchQuery = value;
@@ -264,19 +279,20 @@ class _InventoryHomePageState extends State<InventoryHomePage> with RouteAware {
           : ListView(
               children: parentCategories.map((parent) {
                 final parentItems = filteredItems.where((item) => item.parentCategory == parent).toList();
-                print("Parent: $parent has ${parentItems.length} items");
 
                 final subcategories = parentItems
                     .map((e) => e.categoryName?.trim() ?? 'Uncategorized')
-                    .toSet();
-                print("Subcategories under $parent: $subcategories");
+                    .toSet()
+                    .toList()
+                  ..sort((a, b) => _naturalCompare(a, b));
 
                 return ExpansionTile(
                   title: Text(parent),
                   children: subcategories.map((sub) {
                     final subItems = parentItems
                         .where((item) => (item.categoryName?.trim() ?? 'Uncategorized') == sub)
-                        .toList();
+                        .toList()
+                      ..sort((a, b) => _naturalCompare(a.name, b.name));
 
                     return ExpansionTile(
                       title: GestureDetector(

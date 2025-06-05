@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:string_similarity/string_similarity.dart';
 import 'database_helper.dart';
+import 'utils/sorting.dart';
+
 
 class InOrdersPage extends StatefulWidget {
   @override
@@ -192,20 +194,22 @@ class _InOrdersPageState extends State<InOrdersPage> {
                 );
               }).toList(),
               onChanged: (value) async {
-                selectedCategory = value;
-                final result = await database!.rawQuery('''
-                  SELECT i.name FROM inventory i
-                  JOIN categories c ON i.category_id = c.id
-                  WHERE c.name = ?
-                ''', [selectedCategory]);
-                inventoryList = result.map((row) => {
-                  'name': row['name'],
-                  'id': inventoryMap[row['name']!.toString().toLowerCase()]?['id']
-                }).where((item) => item['id'] != null).toList();
+  selectedCategory = value;
+  final result = await database!.rawQuery('''
+    SELECT i.name FROM inventory i
+    JOIN categories c ON i.category_id = c.id
+    WHERE c.name = ?
+  ''', [selectedCategory]);
+  inventoryList = result.map((row) => {
+    'name': row['name'],
+    'id': inventoryMap[row['name']!.toString().toLowerCase()]?['id']
+  }).where((item) => item['id'] != null).toList()
+    ..sort((a, b) => naturalCompare(a['name'], b['name'])); // ✅ Natural sort
 
-                selectedItemName = null; // Reset selected item
-                setState(() {});
-              },
+  selectedItemName = null;
+  setState(() {});
+},
+
             ),
             SizedBox(height: 12),
             DropdownButtonFormField<String>(

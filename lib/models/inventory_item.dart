@@ -28,7 +28,7 @@ class InventoryItem {
   factory InventoryItem.fromMap(Map<String, dynamic> map) {
     return InventoryItem(
       id: map['id'],
-      name: map['name'],
+      name: map['name'] ?? 'Unnamed',
       brand: map['brand'],
       price: map['price']?.toDouble(),
       unit: map['unit'],
@@ -37,12 +37,12 @@ class InventoryItem {
       categoryName: map['category_name'],
       parentCategory: map['parent_category'],
       quantity: _toInt(map['quantity']),
-      location: map['location'],
+      location: map['location'] ?? 'Unknown',
     );
   }
 }
 
-const String inventoryItemQuery = '''
+String inventoryItemQuery = '''
 SELECT 
   i.id,
   i.name,
@@ -58,10 +58,12 @@ SELECT
 FROM inventory i
 LEFT JOIN categories c ON i.category_id = c.id
 LEFT JOIN categories pc ON c.parent_id = pc.id
-LEFT JOIN inventory_stock s ON i.id = s.inventory_id
-LEFT JOIN locations l ON s.location_id = l.id
+JOIN inventory_stock s ON i.id = s.inventory_id
+JOIN locations l ON s.location_id = l.id
+WHERE l.name IN ('Main warehouse', 'Mojito')
 ORDER BY i.name ASC;
 ''';
+
 
 int _toInt(dynamic value) {
   if (value == null) return 0;
